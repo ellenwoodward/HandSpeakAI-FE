@@ -8,7 +8,7 @@ COPY package*.json ./
 # Install all dependencies (including dev for TypeScript and Next.js)
 RUN npm ci
 
-# Copy app source code
+# Copy source code
 COPY . .
 
 # Build production Next.js app, ignore ESLint errors
@@ -25,8 +25,7 @@ RUN npm ci --omit=dev
 # Copy built app from builder
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/app ./app   # include app folder
+COPY --from=builder /app/src/app ./app   # copy the app folder from src
 
 # Expose Cloud Run port
 ENV PORT 8080
