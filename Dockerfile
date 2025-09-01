@@ -25,7 +25,8 @@ RUN npm ci --omit=dev
 # Copy built app from builder
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/src/app ./app   # copy the app folder from src
+# Copy the app folder from src
+COPY --from=builder /app/src/app ./app
 
 # Expose Cloud Run port
 ENV PORT 8080
