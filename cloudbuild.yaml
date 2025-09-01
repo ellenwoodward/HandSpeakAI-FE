@@ -1,13 +1,10 @@
 steps:
-  # Build Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/$PROJECT_ID/handspeak-app', '.']
 
-  # Push Docker image to GCR
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/handspeak-app']
 
-  # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -19,3 +16,6 @@ steps:
         '--allow-unauthenticated',
         '--set-env-vars', 'OPENAI_API_KEY=$OPENAI_API_KEY'
       ]
+
+options:
+  logging: CLOUD_LOGGING_ONLY
