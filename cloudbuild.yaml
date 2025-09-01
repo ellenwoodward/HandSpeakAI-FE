@@ -15,9 +15,8 @@ steps:
         'run', 'deploy', 'handspeak-app',
         '--image', 'gcr.io/$PROJECT_ID/handspeak-app',
         '--platform', 'managed',
-        '--region', 'us-central1',
+        '--region', 'europe-west1',          # updated region
         '--allow-unauthenticated',
-        '--service-account', 'YOUR_SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com',
         '--set-secrets', 'OPENAI_API_KEY=OPENAI_API_KEY:latest'
       ]
 
