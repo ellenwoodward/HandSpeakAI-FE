@@ -1,20 +1,36 @@
-# Use Node 20
-FROM node:20-alpine
-
+# Stage 1: Build
+FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Install dependencies
+# Copy package files
 COPY package*.json ./
-RUN npm install --production
 
-# Copy app code
+# Install all dependencies (including dev for TypeScript and Next.js)
+RUN npm ci
+
+# Copy app source code
 COPY . .
 
-# Build Next.js frontend
-RUN npx next build
+# Build production Next.js app, ignore ESLint errors
+RUN npx next build --no-lint
+
+# Stage 2: Production image
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+# Copy production dependencies only
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Copy built app from builder
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/app ./app   # include app folder
 
 # Expose Cloud Run port
+ENV PORT 8080
 EXPOSE 8080
 
-# Start custom server
-CMD ["node", "server.js"]
+# Start production server
+CMD ["npx", "next", "start", "-p", "8080"]

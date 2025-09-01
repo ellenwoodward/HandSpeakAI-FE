@@ -21,6 +21,6 @@ steps:
         '--set-secrets', 'OPENAI_API_KEY=OPENAI_API_KEY:latest'
       ]
 
-# Use Cloud Logging only to avoid logs bucket issues
+# Logging option to avoid logs bucket issues with custom service account
 options:
   logging: CLOUD_LOGGING_ONLY
