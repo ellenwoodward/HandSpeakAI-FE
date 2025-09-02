@@ -27,7 +27,7 @@ export default function HomePage() {
 
   // ---- Setup WebSocket ----
   useEffect(() => {
-    const sock = new SockJS("http://localhost:8080/ws"); // replace with your backend WS URL
+    const sock = new WebSocket("wss://handspeak-backend-221849113631.europe-west1.run.app//ws"); // replace with your backend WS URL
 
     sock.onopen = () => console.log("WebSocket connection opened");
     sock.onclose = () => console.log("WebSocket connection closed");
