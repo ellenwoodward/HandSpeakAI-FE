@@ -1,0 +1,26 @@
+steps:
+  # Step 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/handspeak-app', '.']
+
+  # Step 2: Push Docker image to GCR
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/handspeak-app']
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      [
+        'run', 'deploy', 'handspeak-app',
+        '--image', 'gcr.io/$PROJECT_ID/handspeak-app',
+        '--platform', 'managed',
+        '--region', 'europe-west1',    
+        '--allow-unauthenticated',
+        '--service-account=github-ci-cd@continual-modem-469813-j7.iam.gserviceaccount.com',
+        '--set-secrets', 'OPENAI_API_KEY=OPENAI_API_KEY:latest'
+      ]
+
+# Logging option to avoid logs bucket issues with custom service account
+options:
+  logging: CLOUD_LOGGING_ONLY
