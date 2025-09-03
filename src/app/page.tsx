@@ -1,5 +1,4 @@
-"use client";
-
+"use client"
 import { useRef, useState, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
@@ -9,11 +8,26 @@ import * as THREE from "three";
 const BUCKET_URL = "https://storage.googleapis.com/animations-handspeak-ai/"
 const IDLE_MODEL_URL =  BUCKET_URL + "Generic/Idle.glb";
 
-function CharacterModel({ modelUrl, onAnimationFinish }) {
-  const { scene, animations } = useGLTF(modelUrl);
+interface CharacterModelProps {
+  modelUrl: string;
+  onAnimationFinish?: () => void;
+}
+
+export function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
+
+  // Proper GLTF typing
+  const gltf = useGLTF(modelUrl) as unknown as {
+    scene: THREE.Group;
+    animations: THREE.AnimationClip[];
+  };
+
+  const { scene, animations } = gltf;
   const { actions, mixer } = useAnimations(animations, scene);
 
-  const [modelProps, setModelProps] = useState({ position: [0, 0, 0], scale: 1 });
+  const [modelProps, setModelProps] = useState<{ position: [number, number, number]; scale: number }>({
+    position: [0, 0, 0],
+    scale: 1,
+  });
 
   // Center and scale
   useEffect(() => {
@@ -25,13 +39,7 @@ function CharacterModel({ modelUrl, onAnimationFinish }) {
     box.getCenter(center);
 
     const scale = 2 / size.y;
-
-    // ✅ Explicit tuple with exactly 3 elements
-    const position: [number, number, number] = [
-      -center.x * scale,
-      -center.y * scale,
-      -center.z * scale,
-    ];
+    const position: [number, number, number] = [-center.x * scale, -center.y * scale, -center.z * scale];
 
     setModelProps({ position, scale });
   }, [scene]);
@@ -43,16 +51,18 @@ function CharacterModel({ modelUrl, onAnimationFinish }) {
     const currentAction = actions[Object.keys(actions)[0]];
     const isIdle = modelUrl === IDLE_MODEL_URL;
 
+    if(!currentAction) return; // May not need and may cause bugs, just need to test. 
+
     if (isIdle) {
-      currentAction.setLoop(THREE.LoopRepeat);
+      currentAction.setLoop(THREE.LoopRepeat, 1);
     } else {
       currentAction.setLoop(THREE.LoopOnce, 1);
       currentAction.clampWhenFinished = true;
     }
 
-    currentAction.reset().fadeIn(0.2).play();
+    currentAction?.reset().fadeIn(0.2).play();
 
-    const onFinished = (e) => {
+    const onFinished = (e: { action: THREE.AnimationAction }) => {
       if (e.action === currentAction && onAnimationFinish) {
         onAnimationFinish();
       }
@@ -63,7 +73,7 @@ function CharacterModel({ modelUrl, onAnimationFinish }) {
     }
 
     return () => {
-      currentAction.fadeOut(0.2);
+      currentAction?.fadeOut(0.2);
       if (!isIdle) {
         mixer.removeEventListener("finished", onFinished);
       }
@@ -71,43 +81,11 @@ function CharacterModel({ modelUrl, onAnimationFinish }) {
   }, [actions, mixer, modelUrl, onAnimationFinish]);
 
   return (
-    <group position={modelProps.position as [number, number, number]} scale={modelProps.scale}>
+    <group position={modelProps.position} scale={modelProps.scale}>
       <primitive object={scene} />
     </group>
   );
 }
-// function AnimationPlayer() {
-//   const [animationQueue, setAnimationQueue] = useState([]);
-//   const [currentAnimation, setCurrentAnimation] = useState(IDLE_MODEL_URL);
-
-//   // When idle and queue not empty → play next animation
-//   useEffect(() => {
-//     if (currentAnimation === IDLE_MODEL_URL && animationQueue.length > 0) {
-//       const [next, ...rest] = animationQueue;
-//       setCurrentAnimation(next);
-//       setAnimationQueue(rest);
-//     }
-//   }, [animationQueue, currentAnimation]);
-
-//   const handleAnimationFinish = () => {
-//     if (animationQueue.length > 0) {
-//       // Play the next queued animation
-//       const [next, ...rest] = animationQueue;
-//       setCurrentAnimation(next);
-//       setAnimationQueue(rest);
-//     } else {
-//       // Go back to idle loop
-//       setCurrentAnimation(IDLE_MODEL_URL);
-//     }
-//   };
-
-//   return (
-//     <CharacterModel
-//       modelUrl={currentAnimation}
-//       onAnimationFinish={handleAnimationFinish}
-//     />
-//   );
-// }
 
 export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -122,8 +100,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState<null | "mic" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
-  // const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
-  const WEBSOCKET_URL = "ws://localhost:8080/ws";
+  const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
+  // const WEBSOCKET_URL = "ws://localhost:8080/ws"; // Local dev only
 
   // ---- Setup WebSocket ----
   useEffect(() => {
@@ -138,7 +116,7 @@ export default function HomePage() {
         const words = data["asl_translation"] || [];
 
         // Convert words to glb animation files
-        const glbAnimations = words.map((word) => BUCKET_URL + word.value + ".glb");
+        const glbAnimations = words.map((word: any) => BUCKET_URL + word.value + ".glb");
         console.log("Queued animations:", glbAnimations);
 
         // Append to animation queue
@@ -380,6 +358,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-// Preloading is disabled as model URLs are now dynamic
-// useGLTF.preload(IDLE_MODEL_URL);
