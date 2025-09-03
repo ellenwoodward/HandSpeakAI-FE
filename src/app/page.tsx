@@ -1,47 +1,66 @@
 "use client";
 
-import { useRef, useState, useEffect, useMemo } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, useGLTF, useAnimations } from "@react-three/drei";
+import { useRef, useState, useEffect } from "react";
+import { Canvas } from "@react-three/fiber";
+import { useGLTF, useAnimations } from "@react-three/drei";
 import { Button } from "@/components/ui/button";
-import SockJS from "sockjs-client";
 import * as THREE from "three";
 
-const MODEL_URL = "https://storage.googleapis.com/animations-handspeak-ai/A.glb";
+const BUCKET_URL = "https://storage.googleapis.com/animations-handspeak-ai/"
+const IDLE_MODEL_URL =  BUCKET_URL + "Generic/Idle.glb";
 
-function CharacterModel() {
-  const { scene, animations } = useGLTF(MODEL_URL);
-  const { actions } = useAnimations(animations, scene);
+function CharacterModel({ modelUrl, onAnimationFinish }) {
+  const { scene, animations } = useGLTF(modelUrl);
+  const { actions, mixer } = useAnimations(animations, scene);
 
-  // Center and scale dynamically
   const [modelProps, setModelProps] = useState({ position: [0, 0, 0], scale: 1 });
 
+  // Auto-center & scale
   useEffect(() => {
     if (!scene) return;
-
-    // Compute bounding box
     const box = new THREE.Box3().setFromObject(scene);
     const size = new THREE.Vector3();
     box.getSize(size);
     const center = new THREE.Vector3();
     box.getCenter(center);
-
-    // Compute scale to fit height = 2 units
     const scale = 2 / size.y;
-
-    // Offset to center
     const position = [-center.x * scale, -center.y * scale, -center.z * scale];
-
     setModelProps({ position, scale });
   }, [scene]);
 
-  // Play first animation
+  // Play animation
   useEffect(() => {
-    if (actions) {
-      const first = Object.values(actions)[0];
-      first?.reset().fadeIn(0.5).play();
+    if (!actions || Object.keys(actions).length === 0) return;
+
+    const currentAction = actions[Object.keys(actions)[0]];
+    const isIdle = modelUrl === IDLE_MODEL_URL;
+
+    if (isIdle) {
+      currentAction.setLoop(THREE.LoopRepeat);
+    } else {
+      currentAction.setLoop(THREE.LoopOnce, 1);
+      currentAction.clampWhenFinished = true;
     }
-  }, [actions]);
+
+    currentAction.reset().fadeIn(0.2).play();
+
+    const onFinished = (e) => {
+      if (e.action === currentAction && onAnimationFinish) {
+        onAnimationFinish();
+      }
+    };
+
+    if (!isIdle) {
+      mixer.addEventListener("finished", onFinished);
+    }
+
+    return () => {
+      currentAction.fadeOut(0.2);
+      if (!isIdle) {
+        mixer.removeEventListener("finished", onFinished);
+      }
+    };
+  }, [actions, mixer, modelUrl, onAnimationFinish]);
 
   return (
     <group position={modelProps.position} scale={modelProps.scale}>
@@ -49,11 +68,45 @@ function CharacterModel() {
     </group>
   );
 }
+// function AnimationPlayer() {
+//   const [animationQueue, setAnimationQueue] = useState([]);
+//   const [currentAnimation, setCurrentAnimation] = useState(IDLE_MODEL_URL);
+
+//   // When idle and queue not empty → play next animation
+//   useEffect(() => {
+//     if (currentAnimation === IDLE_MODEL_URL && animationQueue.length > 0) {
+//       const [next, ...rest] = animationQueue;
+//       setCurrentAnimation(next);
+//       setAnimationQueue(rest);
+//     }
+//   }, [animationQueue, currentAnimation]);
+
+//   const handleAnimationFinish = () => {
+//     if (animationQueue.length > 0) {
+//       // Play the next queued animation
+//       const [next, ...rest] = animationQueue;
+//       setCurrentAnimation(next);
+//       setAnimationQueue(rest);
+//     } else {
+//       // Go back to idle loop
+//       setCurrentAnimation(IDLE_MODEL_URL);
+//     }
+//   };
+
+//   return (
+//     <CharacterModel
+//       modelUrl={currentAnimation}
+//       onAnimationFinish={handleAnimationFinish}
+//     />
+//   );
+// }
 
 export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const [socket, setSocket] = useState<ReturnType<typeof SockJS> | null>(null);
+  const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [animationQueue, setAnimationQueue] = useState<string[]>([]);
+  const [currentAnimationUrl, setCurrentAnimationUrl] = useState(IDLE_MODEL_URL);
 
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
@@ -61,21 +114,47 @@ export default function HomePage() {
   const [loading, setLoading] = useState<null | "mic" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
+  // const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
+  const WEBSOCKET_URL = "ws://localhost:8080/ws";
+
   // ---- Setup WebSocket ----
   useEffect(() => {
-    const sock = new WebSocket("wss://handspeak-backend-221849113631.europe-west1.run.app/ws");
+    const sock = new WebSocket(WEBSOCKET_URL);
 
-    sock.onopen = () => console.log("WebSocket connection opened");
-    sock.onclose = () => console.log("WebSocket connection closed");
+    sock.onopen = () => console.log("WebSocket connection opened,", sock.readyState);
+    sock.onclose = () => console.log("WebSocket connection closed", sock.readyState);
     sock.onmessage = (e) => {
       console.log("Message received from backend:", e.data);
-      setReceivedMessages((prev) => [...prev, e.data]);
+      try {
+        const data = JSON.parse(e.data);
+        const words = data["asl_translation"] || [];
+
+        // Convert words to glb animation files
+        const glbAnimations = words.map((word) => BUCKET_URL + word.value + ".glb");
+        console.log("Queued animations:", glbAnimations);
+
+        // Append to animation queue
+        setAnimationQueue((prev) => [...prev, ...glbAnimations]);
+      } catch (err) {
+        console.error("Failed to parse animation URLs:", err);
+      }
     };
 
     setSocket(sock);
 
     return () => sock.close();
   }, []);
+
+  // ---- Animation Queue Manager ----
+  useEffect(() => {
+    // If we're idle and there's something in the queue, start the sequence.
+    if (currentAnimationUrl === IDLE_MODEL_URL && animationQueue.length > 0) {
+      const nextUrl = animationQueue[0];
+      const remainingQueue = animationQueue.slice(1);
+      setCurrentAnimationUrl(nextUrl);
+      setAnimationQueue(remainingQueue);
+    }
+  }, [animationQueue, currentAnimationUrl]);
 
   const sendTranscriptToWS = (text: string) => {
     if (socket && text) {
@@ -175,6 +254,19 @@ export default function HomePage() {
     }
   };
 
+  const handleAnimationFinish = () => {
+    // When an animation finishes, check if there's another one in the queue.
+    if (animationQueue.length > 0) {
+      const nextUrl = animationQueue[0];
+      const remainingQueue = animationQueue.slice(1);
+      setCurrentAnimationUrl(nextUrl);
+      setAnimationQueue(remainingQueue);
+    } else {
+      // If the queue is empty, return to idle.
+      setCurrentAnimationUrl(IDLE_MODEL_URL);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-50 text-gray-900">
       {/* Header */}
@@ -239,7 +331,7 @@ export default function HomePage() {
           />
 
           {/* Centered character */}
-          <CharacterModel />
+          <CharacterModel modelUrl={currentAnimationUrl} onAnimationFinish={handleAnimationFinish} />
         </Canvas>
 
         {/* Transcript card */}
@@ -281,4 +373,5 @@ export default function HomePage() {
   );
 }
 
-useGLTF.preload(MODEL_URL);
+// Preloading is disabled as model URLs are now dynamic
+// useGLTF.preload(IDLE_MODEL_URL);
