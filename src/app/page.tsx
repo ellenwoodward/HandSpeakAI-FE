@@ -1,16 +1,53 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls, useGLTF } from "@react-three/drei";
+import { useRef, useState, useEffect, useMemo } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { OrbitControls, useGLTF, useAnimations } from "@react-three/drei";
 import { Button } from "@/components/ui/button";
 import SockJS from "sockjs-client";
+import * as THREE from "three";
 
-const MODEL_URL = "https://storage.googleapis.com/animations-handspeak-ai/character.glb";
+const MODEL_URL = "https://storage.googleapis.com/animations-handspeak-ai/A.glb";
 
 function CharacterModel() {
-  const { scene } = useGLTF(MODEL_URL);
-  return <primitive object={scene} scale={2} />;
+  const { scene, animations } = useGLTF(MODEL_URL);
+  const { actions } = useAnimations(animations, scene);
+
+  // Center and scale dynamically
+  const [modelProps, setModelProps] = useState({ position: [0, 0, 0], scale: 1 });
+
+  useEffect(() => {
+    if (!scene) return;
+
+    // Compute bounding box
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    // Compute scale to fit height = 2 units
+    const scale = 2 / size.y;
+
+    // Offset to center
+    const position = [-center.x * scale, -center.y * scale, -center.z * scale];
+
+    setModelProps({ position, scale });
+  }, [scene]);
+
+  // Play first animation
+  useEffect(() => {
+    if (actions) {
+      const first = Object.values(actions)[0];
+      first?.reset().fadeIn(0.5).play();
+    }
+  }, [actions]);
+
+  return (
+    <group position={modelProps.position} scale={modelProps.scale}>
+      <primitive object={scene} />
+    </group>
+  );
 }
 
 export default function HomePage() {
@@ -19,7 +56,6 @@ export default function HomePage() {
   const [socket, setSocket] = useState<ReturnType<typeof SockJS> | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
-  const [audioURL, setAudioURL] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
   const [loading, setLoading] = useState<null | "mic" | "file">(null);
@@ -43,7 +79,6 @@ export default function HomePage() {
 
   const sendTranscriptToWS = (text: string) => {
     if (socket && text) {
-      // Split by punctuation to send sentence by sentence (optional)
       const sentences = text.split(/[.?!]/).filter((s) => s.trim() !== "");
       sentences.forEach((sentence, i) =>
         setTimeout(() => {
@@ -108,7 +143,6 @@ export default function HomePage() {
             setLoading("mic");
             const blob = new Blob(chunks, { type: mimeType });
             const url = URL.createObjectURL(blob);
-            setAudioURL(url);
 
             const formData = new FormData();
             formData.append("file", new File([blob], "mic_recording.webm", { type: mimeType }));
@@ -173,11 +207,39 @@ export default function HomePage() {
 
       {/* 3D Canvas */}
       <main className="flex-1 bg-gray-100 relative">
-        <Canvas camera={{ position: [0, 1.5, 3] }}>
-          <ambientLight intensity={0.6} />
-          <directionalLight position={[3, 3, 3]} intensity={1} />
+        <Canvas shadows camera={{ position: [0, 1.5, 3], fov: 50 }}>
+          {/* Ambient light */}
+          <ambientLight intensity={0.5} />
+
+          {/* Key directional light */}
+          <directionalLight
+            castShadow
+            position={[10, 10, 5]} 
+            intensity={10}
+            shadow-mapSize-width={1024}
+            shadow-mapSize-height={1024}
+            shadow-camera-near={0.5}
+            shadow-camera-far={50}
+            shadow-camera-left={-10}
+            shadow-camera-right={10}
+            shadow-camera-top={10}
+            shadow-camera-bottom={-10}
+          />
+
+          {/* Fill light */}
+          <directionalLight position={[-5, 5, -5]} intensity={0.5} />
+
+          {/* Rim light */}
+          <spotLight
+            position={[0, 5, -5]}
+            intensity={0.3}
+            angle={Math.PI / 6}
+            penumbra={0.5}
+            castShadow
+          />
+
+          {/* Centered character */}
           <CharacterModel />
-          <OrbitControls enableZoom={true} />
         </Canvas>
 
         {/* Transcript card */}
@@ -185,14 +247,6 @@ export default function HomePage() {
           <div className="absolute bottom-24 right-4 bg-white shadow-md rounded-lg p-3 max-w-sm border">
             <p className="text-sm font-medium">📝 Transcription</p>
             <p className="text-gray-800 mt-2 text-sm whitespace-pre-wrap">{transcript}</p>
-          </div>
-        )}
-
-        {/* Last recording */}
-        {audioURL && (
-          <div className="absolute bottom-4 right-4 bg-white shadow-md rounded-lg p-3 border">
-            <p className="text-sm font-medium">🎧 Last Recording</p>
-            <audio controls src={audioURL} className="mt-2 w-64" />
           </div>
         )}
 
