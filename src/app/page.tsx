@@ -16,10 +16,9 @@ function CharacterModel() {
   // Center and scale dynamically
   const [modelProps, setModelProps] = useState({ position: [0, 0, 0], scale: 1 });
 
+  // Center and scale
   useEffect(() => {
     if (!scene) return;
-
-    // Compute bounding box
     const box = new THREE.Box3().setFromObject(scene);
     const size = new THREE.Vector3();
     box.getSize(size);
@@ -28,7 +27,12 @@ function CharacterModel() {
 
     const scale = 2 / size.y;
 
-    const position = [-center.x * scale, -center.y * scale, -center.z * scale];
+    // ✅ Explicit tuple with exactly 3 elements
+    const position: [number, number, number] = [
+      -center.x * scale,
+      -center.y * scale,
+      -center.z * scale,
+    ];
 
     setModelProps({ position, scale });
   }, [scene]);
@@ -42,7 +46,7 @@ function CharacterModel() {
   }, [actions]);
 
   return (
-    <group position={modelProps.position} scale={modelProps.scale}>
+    <group position={modelProps.position as [number, number, number]} scale={modelProps.scale}>
       <primitive object={scene} />
     </group>
   );
@@ -212,7 +216,7 @@ export default function HomePage() {
           {/* Key directional light */}
           <directionalLight
             castShadow
-            position={[10, 10, 5]} 
+            position={[10, 10, 5]}
             intensity={10}
             shadow-mapSize-width={1024}
             shadow-mapSize-height={1024}
