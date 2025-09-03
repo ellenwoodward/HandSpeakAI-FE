@@ -26,10 +26,8 @@ function CharacterModel() {
     const center = new THREE.Vector3();
     box.getCenter(center);
 
-    // Compute scale to fit height = 2 units
     const scale = 2 / size.y;
 
-    // Offset to center
     const position = [-center.x * scale, -center.y * scale, -center.z * scale];
 
     setModelProps({ position, scale });
