@@ -1,88 +1,129 @@
-"use client"
+"use client";
 import { useRef, useState, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
 import { Button } from "@/components/ui/button";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const BUCKET_URL = "https://storage.googleapis.com/animations-handspeak-ai/"
-const IDLE_MODEL_URL =  BUCKET_URL + "Generic/Idle.glb";
+const BUCKET_URL = "https://storage.googleapis.com/animations-handspeak-ai/";
+const IDLE_MODEL_URL = BUCKET_URL + "Generic/Idle.glb";
 
 interface CharacterModelProps {
-  modelUrl: string;
+  animationUrls: string[];
   onAnimationFinish?: () => void;
 }
 
- function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
+function CharacterModel({ animationUrls, onAnimationFinish }: CharacterModelProps) {
+  const groupRef = useRef<THREE.Group>(null);
 
-  // Proper GLTF typing
-  const gltf = useGLTF(modelUrl) as unknown as {
+  // Load the rig once (idle)
+  const { scene: rigScene, animations: idleAnimations } = useGLTF(IDLE_MODEL_URL) as unknown as {
     scene: THREE.Group;
     animations: THREE.AnimationClip[];
   };
 
-  const { scene, animations } = gltf;
-  const { actions, mixer } = useAnimations(animations, scene);
+  const { actions, mixer } = useAnimations(idleAnimations, rigScene);
 
   const [modelProps, setModelProps] = useState<{ position: [number, number, number]; scale: number }>({
     position: [0, 0, 0],
     scale: 1,
   });
 
-  // Center and scale
+  // Center and scale rig
   useEffect(() => {
-    if (!scene) return;
-    const box = new THREE.Box3().setFromObject(scene);
+    const box = new THREE.Box3().setFromObject(rigScene);
     const size = new THREE.Vector3();
     box.getSize(size);
     const center = new THREE.Vector3();
     box.getCenter(center);
-
     const scale = 2 / size.y;
     const position: [number, number, number] = [-center.x * scale, -center.y * scale, -center.z * scale];
-
     setModelProps({ position, scale });
-  }, [scene]);
+  }, [rigScene]);
 
-  // Play animation
+  // Play idle initially
   useEffect(() => {
-    if (!actions || Object.keys(actions).length === 0) return;
-
-    const currentAction = actions[Object.keys(actions)[0]];
-    const isIdle = modelUrl === IDLE_MODEL_URL;
-
-    if(!currentAction) return; // May not need and may cause bugs, just need to test. 
-
-    if (isIdle) {
-      currentAction.setLoop(THREE.LoopRepeat, 1);
-    } else {
-      currentAction.setLoop(THREE.LoopOnce, 1);
-      currentAction.clampWhenFinished = true;
+    if (!actions) return;
+    const idleAction = actions[Object.keys(actions)[0]];
+    if (idleAction) {
+      idleAction.setLoop(THREE.LoopRepeat, Infinity);
+      idleAction.reset().fadeIn(0.2).play();
     }
+  }, [actions]);
 
-    currentAction?.reset().fadeIn(0.2).play();
+  // Play queued animations sequentially
+  useEffect(() => {
+    if (!animationUrls.length || !mixer) return;
 
-    const onFinished = (e: { action: THREE.AnimationAction }) => {
-      if (e.action === currentAction && onAnimationFinish) {
-        onAnimationFinish();
+    const loader = new GLTFLoader();
+
+    const loadAnimations = async () => {
+      try {
+        const clips: THREE.AnimationClip[] = [];
+
+        for (const url of animationUrls) {
+          const gltf = await new Promise<any>((resolve, reject) =>
+            loader.load(url, resolve, undefined, reject)
+          );
+
+          // Remove meshes, keep only animation data
+          gltf.scene.traverse((child: THREE.Mesh<THREE.BufferGeometry<THREE.NormalBufferAttributes, THREE.BufferGeometryEventMap>, THREE.Material | THREE.Material[], THREE.Object3DEventMap>) => {
+            if ((child as THREE.Mesh).isMesh) gltf.scene.remove(child);
+          });
+
+          clips.push(...gltf.animations);
+        }
+
+        if (!clips.length) return;
+
+        // Stop all current actions (idle too)
+        Object.values(actions).forEach((a) => a && a.stop());
+
+        // Play sequentially
+        let index = 0;
+        const playNext = () => {
+          if (index >= clips.length) {
+            // Return to idle
+            const idleAction = actions[Object.keys(actions)[0]];
+            if (idleAction) {
+              idleAction.reset().fadeIn(0.2).play();
+            }
+            onAnimationFinish?.();
+            return;
+          }
+
+          const clip = clips[index];
+          const action = mixer.clipAction(clip, rigScene);
+          action.reset();
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.timeScale = 2;
+          action.zeroSlopeAtStart = true;
+          action.fadeIn(0).play();
+
+          const onFinished = () => {
+            action.fadeOut(0.2);
+            mixer.removeEventListener("finished", onFinished);
+            index++;
+            playNext();
+          };
+
+          mixer.addEventListener("finished", onFinished);
+        };
+
+        playNext();
+      } catch (err) {
+        console.error("Failed to load animation GLB:", err);
       }
     };
 
-    if (!isIdle) {
-      mixer.addEventListener("finished", onFinished);
-    }
-
-    return () => {
-      currentAction?.fadeOut(0.2);
-      if (!isIdle) {
-        mixer.removeEventListener("finished", onFinished);
-      }
-    };
-  }, [actions, mixer, modelUrl, onAnimationFinish]);
+    loadAnimations();
+  }, [animationUrls, actions, mixer, rigScene, onAnimationFinish]);
 
   return (
-    <group position={modelProps.position} scale={modelProps.scale}>
-      <primitive object={scene} />
+    <group ref={groupRef} position={modelProps.position} scale={modelProps.scale}>
+      <primitive object={rigScene} />
     </group>
   );
 }
@@ -92,94 +133,69 @@ export default function HomePage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [animationQueue, setAnimationQueue] = useState<string[]>([]);
-  const [currentAnimationUrl, setCurrentAnimationUrl] = useState(IDLE_MODEL_URL);
+  const [currentAnimations, setCurrentAnimations] = useState<string[]>([]);
 
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
-  const [receivedMessages, setReceivedMessages] = useState<string[]>([]);
   const [loading, setLoading] = useState<null | "mic" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
   const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
-  // const WEBSOCKET_URL = "ws://localhost:8080/ws"; // Local dev only
 
-  // ---- Setup WebSocket ----
+  // WebSocket setup
   useEffect(() => {
     const sock = new WebSocket(WEBSOCKET_URL);
 
-    sock.onopen = () => console.log("WebSocket connection opened,", sock.readyState);
-    sock.onclose = () => console.log("WebSocket connection closed", sock.readyState);
+    sock.onopen = () => console.log("WebSocket connected");
+    sock.onclose = () => console.log("WebSocket closed");
     sock.onmessage = (e) => {
-      console.log("Message received from backend:", e.data);
       try {
         const data = JSON.parse(e.data);
         const words = data["asl_translation"] || [];
-
-        // Convert words to glb animation files
         const glbAnimations = words.map((word: any) => BUCKET_URL + word.value + ".glb");
-
-        console.log("Queued animations:", glbAnimations);
-        // Append to animation queue
         setAnimationQueue((prev) => [...prev, ...glbAnimations]);
 
-        // Kick off background preloading asynchronously
-        glbAnimations.forEach((glb: string) => {
-          setTimeout(() => {
-            useGLTF.preload(glb);
-          }, 0); // pushes work off main call stack
-        });
-
+        // Preload asynchronously
+        glbAnimations.forEach((glb: string | string[]) => useGLTF.preload(glb));
       } catch (err) {
         console.error("Failed to parse animation URLs:", err);
       }
     };
 
     setSocket(sock);
-
     return () => sock.close();
   }, []);
 
-  // ---- Animation Queue Manager ----
+  // Queue manager
   useEffect(() => {
-    // If we're idle and there's something in the queue, start the sequence.
-    if (currentAnimationUrl === IDLE_MODEL_URL && animationQueue.length > 0) {
-      const nextUrl = animationQueue[0];
-      const remainingQueue = animationQueue.slice(1);
-      setCurrentAnimationUrl(nextUrl);
-      setAnimationQueue(remainingQueue);
+    if (animationQueue.length > 0 && currentAnimations.length === 0) {
+      setCurrentAnimations([animationQueue[0]]);
+      setAnimationQueue((prev) => prev.slice(1));
     }
-  }, [animationQueue, currentAnimationUrl]);
+  }, [animationQueue, currentAnimations]);
 
   const sendTranscriptToWS = (text: string) => {
-    if (socket && text) {
-      const sentences = text.split(/[.?!]/).filter((s) => s.trim() !== "");
-      sentences.forEach((sentence, i) =>
-        setTimeout(() => {
-          socket.send(sentence.trim());
-          console.log("Sent to WS:", sentence.trim());
-        }, i * 500)
-      );
-    }
+    if (!socket || !text) return;
+    text.split(/[.?!]/)
+      .filter((s) => s.trim())
+      .forEach((sentence, i) => setTimeout(() => socket.send(sentence.trim()), i * 500));
   };
 
-  // ---- File upload handler ----
   const handleUploadClick = () => fileInputRef.current?.click();
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       setError(null);
       setTranscript(null);
-      if (!e.target.files || !e.target.files[0]) return;
+      if (!e.target.files?.[0]) return;
 
-      const file = e.target.files[0];
       setLoading("file");
-
+      const file = e.target.files[0];
       const formData = new FormData();
       formData.append("file", file);
 
       const res = await fetch("/api/transcribe", { method: "POST", body: formData });
       const data = await res.json();
-
       if (!res.ok) throw new Error(data?.error || "Transcription failed");
 
       setTranscript(data.text || "(No text)");
@@ -192,37 +208,26 @@ export default function HomePage() {
     }
   };
 
-  // ---- Microphone recording handler ----
   const handleMicToggle = async () => {
     if (!isRecording) {
       try {
         setError(null);
         setTranscript(null);
-
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : "audio/webm";
-
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
         const mediaRecorder = new MediaRecorder(stream, { mimeType });
         const chunks: Blob[] = [];
 
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
         mediaRecorder.onstop = async () => {
           try {
             setLoading("mic");
             const blob = new Blob(chunks, { type: mimeType });
-            const url = URL.createObjectURL(blob);
-
             const formData = new FormData();
             formData.append("file", new File([blob], "mic_recording.webm", { type: mimeType }));
 
             const res = await fetch("/api/transcribe", { method: "POST", body: formData });
             const data = await res.json();
-
             if (!res.ok) throw new Error(data?.error || "Transcription failed");
 
             setTranscript(data.text || "(No text)");
@@ -249,86 +254,41 @@ export default function HomePage() {
   };
 
   const handleAnimationFinish = () => {
-    // When an animation finishes, check if there's another one in the queue.
     if (animationQueue.length > 0) {
-      const nextUrl = animationQueue[0];
-      const remainingQueue = animationQueue.slice(1);
-      setCurrentAnimationUrl(nextUrl);
-      setAnimationQueue(remainingQueue);
+      setCurrentAnimations([animationQueue[0]]);
+      setAnimationQueue((prev) => prev.slice(1));
     } else {
-      // If the queue is empty, return to idle.
-      setCurrentAnimationUrl(IDLE_MODEL_URL);
+      setCurrentAnimations([]);
     }
   };
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
       <header className="w-full border-b bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-blue-600">HandSpeak AI</h1>
         </div>
       </header>
 
-      {/* Controls */}
       <div className="bg-white border-b shadow-sm p-4 flex gap-4 justify-center">
         <Button onClick={handleUploadClick} disabled={loading !== null || isRecording}>
           {loading === "file" ? "Uploading…" : "Upload Audio/Video"}
         </Button>
-        <input
-          type="file"
-          accept="audio/*,video/*"
-          className="hidden"
-          ref={fileInputRef}
-          onChange={handleFileChange}
-        />
-        <Button
-          variant={isRecording ? "destructive" : "secondary"}
-          onClick={handleMicToggle}
-          disabled={loading !== null}
-        >
+        <input type="file" accept="audio/*,video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+        <Button variant={isRecording ? "destructive" : "secondary"} onClick={handleMicToggle} disabled={loading !== null}>
           {isRecording ? "⏹ Stop & Transcribe" : "🎤 Start Mic Recording"}
         </Button>
       </div>
 
-      {/* 3D Canvas */}
       <main className="flex-1 bg-gray-100 relative">
         <Canvas shadows camera={{ position: [0, 1.5, 3], fov: 50 }}>
-          {/* Ambient light */}
           <ambientLight intensity={0.5} />
-
-          {/* Key directional light */}
-          <directionalLight
-            castShadow
-            position={[10, 10, 5]}
-            intensity={10}
-            shadow-mapSize-width={1024}
-            shadow-mapSize-height={1024}
-            shadow-camera-near={0.5}
-            shadow-camera-far={50}
-            shadow-camera-left={-10}
-            shadow-camera-right={10}
-            shadow-camera-top={10}
-            shadow-camera-bottom={-10}
-          />
-
-          {/* Fill light */}
+          <directionalLight castShadow position={[10, 10, 5]} intensity={10} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-near={0.5} shadow-camera-far={50} shadow-camera-left={-10} shadow-camera-right={10} shadow-camera-top={10} shadow-camera-bottom={-10} />
           <directionalLight position={[-5, 5, -5]} intensity={0.5} />
-
-          {/* Rim light */}
-          <spotLight
-            position={[0, 5, -5]}
-            intensity={0.3}
-            angle={Math.PI / 6}
-            penumbra={0.5}
-            castShadow
-          />
-
-          {/* Centered character */}
-          <CharacterModel modelUrl={currentAnimationUrl} onAnimationFinish={handleAnimationFinish} />
+          <spotLight position={[0, 5, -5]} intensity={0.3} angle={Math.PI / 6} penumbra={0.5} castShadow />
+          <CharacterModel animationUrls={currentAnimations} onAnimationFinish={handleAnimationFinish} />
         </Canvas>
 
-        {/* Transcript card */}
         {transcript && (
           <div className="absolute bottom-24 right-4 bg-white shadow-md rounded-lg p-3 max-w-sm border">
             <p className="text-sm font-medium">📝 Transcription</p>
@@ -336,28 +296,14 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Errors */}
         {error && (
           <div className="absolute top-4 right-4 bg-red-50 text-red-700 border border-red-200 rounded-lg p-3 max-w-sm">
             <p className="text-sm font-medium">Error</p>
             <p className="text-sm mt-1">{error}</p>
           </div>
         )}
-
-        {/* Received messages from backend */}
-        {receivedMessages.length > 0 && (
-          <div className="absolute bottom-24 left-4 bg-white shadow-md rounded-lg p-3 max-w-sm border">
-            <p className="text-sm font-medium">💬 Backend Messages</p>
-            <ul className="mt-2 text-sm list-disc pl-4">
-              {receivedMessages.map((msg, i) => (
-                <li key={i}>{msg}</li>
-              ))}
-            </ul>
-          </div>
-        )}
       </main>
 
-      {/* Footer */}
       <footer className="w-full bg-white border-t shadow-sm py-4">
         <div className="max-w-7xl mx-auto px-6 flex justify-between text-sm text-gray-500">
           <p>© {new Date().getFullYear()} HandSpeak AI. All rights reserved.</p>
