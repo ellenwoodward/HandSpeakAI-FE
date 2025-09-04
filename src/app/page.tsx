@@ -13,7 +13,7 @@ interface CharacterModelProps {
   onAnimationFinish?: () => void;
 }
 
-export function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
+function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
 
   // Proper GLTF typing
   const gltf = useGLTF(modelUrl) as unknown as {
