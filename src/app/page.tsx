@@ -93,6 +93,7 @@ function CharacterModel({ animationQueue, onQueueFinished }: CharacterModelProps
         next.setLoop(THREE.LoopOnce, 1);
         next.clampWhenFinished = true;
         next.setEffectiveWeight(1);
+        next.timeScale = 2;
         next.play();
 
         const from = currentActionRef.current;
