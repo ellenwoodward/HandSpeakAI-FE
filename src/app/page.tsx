@@ -12,6 +12,7 @@ interface CharacterModelProps {
   modelUrl: string;
   onAnimationFinish?: () => void;
 }
+
  function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
 
   // Proper GLTF typing
@@ -117,14 +118,17 @@ export default function HomePage() {
         // Convert words to glb animation files
         const glbAnimations = words.map((word: any) => BUCKET_URL + word.value + ".glb");
 
-        // Preloading the animations
-        glbAnimations.array.forEach((glb : any) => {
-          useGLTF.preload(glb)
-        });
-
         console.log("Queued animations:", glbAnimations);
         // Append to animation queue
         setAnimationQueue((prev) => [...prev, ...glbAnimations]);
+
+        // Kick off background preloading asynchronously
+        glbAnimations.forEach((glb: string) => {
+          setTimeout(() => {
+            useGLTF.preload(glb);
+          }, 0); // pushes work off main call stack
+        });
+        
       } catch (err) {
         console.error("Failed to parse animation URLs:", err);
       }
