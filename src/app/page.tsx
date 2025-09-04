@@ -100,8 +100,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState<null | "mic" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
-  // const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
-  const WEBSOCKET_URL = "ws://localhost:8080/ws"; // Local dev only
+  const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
+  // const WEBSOCKET_URL = "ws://localhost:8080/ws"; // Local dev only
 
   // ---- Setup WebSocket ----
   useEffect(() => {
@@ -128,7 +128,7 @@ export default function HomePage() {
             useGLTF.preload(glb);
           }, 0); // pushes work off main call stack
         });
-        
+
       } catch (err) {
         console.error("Failed to parse animation URLs:", err);
       }
