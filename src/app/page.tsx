@@ -12,8 +12,7 @@ interface CharacterModelProps {
   modelUrl: string;
   onAnimationFinish?: () => void;
 }
-
-function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
+ function CharacterModel({ modelUrl, onAnimationFinish }: CharacterModelProps) {
 
   // Proper GLTF typing
   const gltf = useGLTF(modelUrl) as unknown as {
@@ -100,8 +99,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState<null | "mic" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
-  const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
-  // const WEBSOCKET_URL = "ws://localhost:8080/ws"; // Local dev only
+  // const WEBSOCKET_URL = "wss://handspeak-backend-221849113631.europe-west1.run.app/ws";
+  const WEBSOCKET_URL = "ws://localhost:8080/ws"; // Local dev only
 
   // ---- Setup WebSocket ----
   useEffect(() => {
@@ -117,8 +116,13 @@ export default function HomePage() {
 
         // Convert words to glb animation files
         const glbAnimations = words.map((word: any) => BUCKET_URL + word.value + ".glb");
-        console.log("Queued animations:", glbAnimations);
 
+        // Preloading the animations
+        glbAnimations.array.forEach((glb : any) => {
+          useGLTF.preload(glb)
+        });
+
+        console.log("Queued animations:", glbAnimations);
         // Append to animation queue
         setAnimationQueue((prev) => [...prev, ...glbAnimations]);
       } catch (err) {
@@ -358,3 +362,5 @@ export default function HomePage() {
     </div>
   );
 }
+
+useGLTF.preload(IDLE_MODEL_URL);
