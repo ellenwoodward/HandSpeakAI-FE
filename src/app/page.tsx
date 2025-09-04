@@ -10,14 +10,14 @@ const BUCKET_URL = "https://storage.googleapis.com/animations-handspeak-ai/";
 const IDLE_MODEL_URL = BUCKET_URL + "Generic/Idle.glb";
 
 interface CharacterModelProps {
-  animationUrls: string[];
-  onAnimationFinish?: () => void;
+  animationQueue: string[];
+  onQueueFinished?: () => void;
 }
 
-function CharacterModel({ animationUrls, onAnimationFinish }: CharacterModelProps) {
+function CharacterModel({ animationQueue, onQueueFinished }: CharacterModelProps) {
   const groupRef = useRef<THREE.Group>(null);
 
-  // Load the rig once (idle)
+  // Load Idle rig once
   const { scene: rigScene, animations: idleAnimations } = useGLTF(IDLE_MODEL_URL) as unknown as {
     scene: THREE.Group;
     animations: THREE.AnimationClip[];
@@ -25,12 +25,15 @@ function CharacterModel({ animationUrls, onAnimationFinish }: CharacterModelProp
 
   const { actions, mixer } = useAnimations(idleAnimations, rigScene);
 
+  const idleActionRef = useRef<THREE.AnimationAction | null>(null);
+  const currentActionRef = useRef<THREE.AnimationAction | null>(null);
+
   const [modelProps, setModelProps] = useState<{ position: [number, number, number]; scale: number }>({
     position: [0, 0, 0],
     scale: 1,
   });
 
-  // Center and scale rig
+  // Center & scale rig
   useEffect(() => {
     const box = new THREE.Box3().setFromObject(rigScene);
     const size = new THREE.Vector3();
@@ -38,88 +41,99 @@ function CharacterModel({ animationUrls, onAnimationFinish }: CharacterModelProp
     const center = new THREE.Vector3();
     box.getCenter(center);
     const scale = 2 / size.y;
-    const position: [number, number, number] = [-center.x * scale, -center.y * scale, -center.z * scale];
+    const position: [number, number, number] = [
+      -center.x * scale,
+      -center.y * scale,
+      -center.z * scale,
+    ];
     setModelProps({ position, scale });
   }, [rigScene]);
 
-  // Play idle initially
+  // Setup idle once
   useEffect(() => {
     if (!actions) return;
-    const idleAction = actions[Object.keys(actions)[0]];
-    if (idleAction) {
-      idleAction.setLoop(THREE.LoopRepeat, Infinity);
-      idleAction.reset().fadeIn(0.2).play();
+    const idle = actions[Object.keys(actions)[0]];
+    if (idle) {
+      idle.enabled = true;
+      idle.setLoop(THREE.LoopRepeat, Infinity);
+      idle.reset().setEffectiveWeight(1).fadeIn(0.2).play();
+      idleActionRef.current = idle;
+      currentActionRef.current = idle;
     }
   }, [actions]);
 
-  // Play queued animations sequentially
+  // Process animation queue
   useEffect(() => {
-    if (!animationUrls.length || !mixer) return;
+    if (!animationQueue.length || !mixer) return;
 
+    let disposed = false;
     const loader = new GLTFLoader();
 
-    const loadAnimations = async () => {
-      try {
-        const clips: THREE.AnimationClip[] = [];
-
-        for (const url of animationUrls) {
-          const gltf = await new Promise<any>((resolve, reject) =>
-            loader.load(url, resolve, undefined, reject)
-          );
-
-          // Remove meshes, keep only animation data
-          gltf.scene.traverse((child: THREE.Mesh<THREE.BufferGeometry<THREE.NormalBufferAttributes, THREE.BufferGeometryEventMap>, THREE.Material | THREE.Material[], THREE.Object3DEventMap>) => {
-            if ((child as THREE.Mesh).isMesh) gltf.scene.remove(child);
-          });
-
+    (async () => {
+      const clips: THREE.AnimationClip[] = [];
+      for (const url of animationQueue) {
+        const gltf = await new Promise<any>((resolve, reject) =>
+          loader.load(url, resolve, undefined, reject)
+        );
+        if (gltf.animations?.length) {
           clips.push(...gltf.animations);
         }
-
-        if (!clips.length) return;
-
-        // Stop all current actions (idle too)
-        Object.values(actions).forEach((a) => a && a.stop());
-
-        // Play sequentially
-        let index = 0;
-        const playNext = () => {
-          if (index >= clips.length) {
-            // Return to idle
-            const idleAction = actions[Object.keys(actions)[0]];
-            if (idleAction) {
-              idleAction.reset().fadeIn(0.2).play();
-            }
-            onAnimationFinish?.();
-            return;
-          }
-
-          const clip = clips[index];
-          const action = mixer.clipAction(clip, rigScene);
-          action.reset();
-          action.setLoop(THREE.LoopOnce, 1);
-          action.clampWhenFinished = true;
-          action.timeScale = 2;
-          action.zeroSlopeAtStart = true;
-          action.fadeIn(0).play();
-
-          const onFinished = () => {
-            action.fadeOut(0.2);
-            mixer.removeEventListener("finished", onFinished);
-            index++;
-            playNext();
-          };
-
-          mixer.addEventListener("finished", onFinished);
-        };
-
-        playNext();
-      } catch (err) {
-        console.error("Failed to load animation GLB:", err);
       }
-    };
 
-    loadAnimations();
-  }, [animationUrls, actions, mixer, rigScene, onAnimationFinish]);
+      if (!clips.length || disposed) return;
+
+      let i = 0;
+
+      const playClip = (clip: THREE.AnimationClip) => {
+        if (disposed) return;
+
+        const next = mixer.clipAction(clip, rigScene);
+        next.reset();
+        next.enabled = true;
+        next.setLoop(THREE.LoopOnce, 1);
+        next.clampWhenFinished = true;
+        next.setEffectiveWeight(1);
+        next.play();
+
+        const from = currentActionRef.current;
+        if (from && from !== next) {
+          from.crossFadeTo(next, 0.25, false);
+        }
+        currentActionRef.current = next;
+
+const onFinished = (e: any) => {
+  if (e.action !== next) return;
+  mixer.removeEventListener("finished", onFinished);
+
+  // Crossfade back to idle
+  if (idleActionRef.current) {
+    next.crossFadeTo(idleActionRef.current, 0.25, false);
+    currentActionRef.current = idleActionRef.current;
+  }
+
+  i++;
+  if (i < clips.length) {
+    playClip(clips[i]);
+  } else {
+    // ✅ Force reset idle once queue is done
+    if (idleActionRef.current) {
+      idleActionRef.current.reset().fadeIn(0.2).play();
+      currentActionRef.current = idleActionRef.current;
+    }
+    onQueueFinished?.();
+  }
+};
+
+        mixer.addEventListener("finished", onFinished);
+      };
+
+      playClip(clips[0]);
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [animationQueue, mixer, rigScene, onQueueFinished]);
 
   return (
     <group ref={groupRef} position={modelProps.position} scale={modelProps.scale}>
@@ -132,8 +146,8 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [socket, setSocket] = useState<WebSocket | null>(null);
+
   const [animationQueue, setAnimationQueue] = useState<string[]>([]);
-  const [currentAnimations, setCurrentAnimations] = useState<string[]>([]);
 
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
@@ -155,7 +169,6 @@ export default function HomePage() {
         const glbAnimations = words.map((word: any) => BUCKET_URL + word.value + ".glb");
         setAnimationQueue((prev) => [...prev, ...glbAnimations]);
 
-        // Preload asynchronously
         glbAnimations.forEach((glb: string | string[]) => useGLTF.preload(glb));
       } catch (err) {
         console.error("Failed to parse animation URLs:", err);
@@ -165,14 +178,6 @@ export default function HomePage() {
     setSocket(sock);
     return () => sock.close();
   }, []);
-
-  // Queue manager
-  useEffect(() => {
-    if (animationQueue.length > 0 && currentAnimations.length === 0) {
-      setCurrentAnimations([animationQueue[0]]);
-      setAnimationQueue((prev) => prev.slice(1));
-    }
-  }, [animationQueue, currentAnimations]);
 
   const sendTranscriptToWS = (text: string) => {
     if (!socket || !text) return;
@@ -253,15 +258,6 @@ export default function HomePage() {
     }
   };
 
-  const handleAnimationFinish = () => {
-    if (animationQueue.length > 0) {
-      setCurrentAnimations([animationQueue[0]]);
-      setAnimationQueue((prev) => prev.slice(1));
-    } else {
-      setCurrentAnimations([]);
-    }
-  };
-
   return (
     <div className="flex flex-col h-screen bg-gray-50 text-gray-900">
       <header className="w-full border-b bg-white shadow-sm">
@@ -286,7 +282,7 @@ export default function HomePage() {
           <directionalLight castShadow position={[10, 10, 5]} intensity={10} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-near={0.5} shadow-camera-far={50} shadow-camera-left={-10} shadow-camera-right={10} shadow-camera-top={10} shadow-camera-bottom={-10} />
           <directionalLight position={[-5, 5, -5]} intensity={0.5} />
           <spotLight position={[0, 5, -5]} intensity={0.3} angle={Math.PI / 6} penumbra={0.5} castShadow />
-          <CharacterModel animationUrls={currentAnimations} onAnimationFinish={handleAnimationFinish} />
+          <CharacterModel animationQueue={animationQueue} onQueueFinished={() => setAnimationQueue([])} />
         </Canvas>
 
         {transcript && (
