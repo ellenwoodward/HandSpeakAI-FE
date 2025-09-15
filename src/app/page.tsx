@@ -279,7 +279,7 @@ export default function HomePage() {
 
       <main className="flex-1 bg-gray-100 relative">
         <Canvas shadows camera={{ position: [0, 1.5, 3], fov: 50 }}>
-          <ambientLight intensity={0.5} />
+          <ambientLight intensity={9} />
           <directionalLight castShadow position={[10, 10, 5]} intensity={10} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-near={0.5} shadow-camera-far={50} shadow-camera-left={-10} shadow-camera-right={10} shadow-camera-top={10} shadow-camera-bottom={-10} />
           <directionalLight position={[-5, 5, -5]} intensity={0.5} />
           <spotLight position={[0, 5, -5]} intensity={0.3} angle={Math.PI / 6} penumbra={0.5} castShadow />
